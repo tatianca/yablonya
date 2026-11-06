@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Цветущая яблоня - пазл, который собирают пальцами</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1720; color: #fff;
+    font-family: 'Times New Roman', Times, serif; font-variant-numeric: lining-nums; font-size: 20px; line-height: 1.7; }
+  video { display: none; }
+  #c { position: fixed; inset: 0; width: 100vw; height: 100vh; touch-action: none; }
+  #ui { position: fixed; top: 10px; left: 10px; right: 10px; display: flex; gap: 10px; align-items: center;
+    flex-wrap: wrap; z-index: 5; pointer-events: none; }
+  #ui > * { pointer-events: auto; }
+  button { font-family: inherit; font-variant-numeric: lining-nums; font-size: 19px; padding: 6px 16px;
+    border-radius: 10px; border: 2px solid #fff; background: rgba(0,0,0,.6); color: #fff; cursor: pointer; line-height: 1.5; }
+  button:hover { background: rgba(192,40,40,.75); }
+  button.on { background: #c0392b; }
+  #status { font-size: 20px; background: rgba(0,0,0,.6); padding: 6px 14px; border-radius: 10px; }
+  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10;
+    background: rgba(10,16,24,.82); }
+  .card { max-width: 680px; margin: 20px; padding: 28px 34px; border-radius: 18px; background: #fffaf3; color: #2b1d14;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .card h1 { margin: 0 0 10px; font-size: 40px; color: #a61e1e; line-height: 1.2; }
+  .card p { margin: 0 0 16px; font-size: 21px; }
+  .card button { color: #fff; background: #b3261e; border-color: #b3261e; font-size: 21px; margin: 6px 10px 6px 0; padding: 10px 22px; }
+  .card button.alt { background: #fff; color: #2b1d14; border-color: #2b1d14; }
+  #introMsg { color: #a61e1e; min-height: 1em; }
+  #done { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 6; display: none;
+    background: rgba(255,250,243,.95); color: #2b1d14; border-radius: 16px; padding: 12px 24px; text-align: center;
+    box-shadow: 0 10px 40px rgba(0,0,0,.45); }
+  #done b { font-size: 26px; color: #a61e1e; }
+  #done button { color: #fff; background: #b3261e; border-color: #b3261e; margin-left: 14px; }
+</style>
+</head>
+<body>
+<video id="video" playsinline muted></video>
+<canvas id="c"></canvas>
+
+<div id="ui">
+  <span id="status">Собрано: 0 из 9</span>
+  <button data-n="3" class="size on">3 x 3</button>
+  <button data-n="4" class="size">4 x 4</button>
+  <button data-n="5" class="size">5 x 5</button>
+  <button id="shuffle">Перемешать</button>
+  <button id="camToggle">Включить камеру</button>
+</div>
+
+<div id="done"><b>Пазл собран!</b> На яблоне созрели яблоки. <button id="again">Собрать заново</button></div>
+
+<div class="overlay" id="intro">
+  <div class="card">
+    <h1>Цветущая яблоня</h1>
+    <p>Перед вами пазл с цветущей яблоней. Встаньте перед камерой и соберите его пальцами.</p>
+    <p>Сведите большой и указательный палец вместе, чтобы взять кусочек. Разведите пальцы, чтобы его отпустить. Кусочек рядом со своим местом встанет туда сам.</p>
+    <p>Когда картинка сложится, на яблоне появятся красные яблоки.</p>
+    <button id="btnCam">Включить камеру</button>
+    <button id="btnMouse" class="alt">Играть мышью</button>
+    <p id="introMsg"></p>
+  </div>
+</div>
+
+<script>
+(() => {
+const $ = s => document.querySelector(s);
+const cv = $('#c'), ctx = cv.getContext('2d');
+const video = $('#video');
+const hitCtx = document.createElement('canvas').getContext('2d');
+const S = 1000;                       // размер картинки в "единицах картинки"
+let W = 0, H = 0, dpr = 1;
+let n = 3, pw, ph;
+let pieces = [];
+let tree = null;                      // { img, apples: [[x,y],...] }
+const board = { x: 0, y: 0, size: 0, k: 1 };
+let state = 'play', doneT = 0;
+let camOn = false, landmarker = null, lastVT = -1, modelStatus = '';
+const pointers = new Map();
+const hands = {};                     // состояние рук по меткам Left/Right
+let fx = [], petals = [];
+let audio = null;
+
+/* ---------- генератор случайных чисел с зерном ---------- */
+function rngf(seed) {
+  return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+}
+
+/* ---------- рисуем цветущую яблоню ---------- */
+function makeTree() {
+  const c = document.createElement('canvas'); c.width = c.height = S;
+  const g = c.getContext('2d'); const R = rngf(11);
+
+  let gr = g.createLinearGradient(0, 0, 0, S);
+  gr.addColorStop(0, '#8fcbff'); gr.addColorStop(.65, '#dff1ff'); gr.addColorStop(1, '#f4fbff');
+  g.fillStyle = gr; g.fillRect(0, 0, S, S);
+
+  gr = g.createRadialGradient(840, 140, 10, 840, 140, 170);
+  gr.addColorStop(0, 'rgba(255,248,200,1)'); gr.addColorStop(.35, 'rgba(255,240,170,.6)'); gr.addColorStop(1, 'rgba(255,240,170,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, S, S);
+
+  g.fillStyle = 'rgba(255,255,255,.85)';
+  for (const [cx, cy, s] of [[170, 140, 1], [560, 90, .8], [380, 210, .6]]) {
+    for (let i = 0; i < 6; i++) { g.beginPath();
+      g.ellipse(cx + (i - 2.5) * 34 * s, cy + Math.sin(i * 1.7) * 10 * s, 46 * s, 30 * s, 0, 0, Math.PI * 2); g.fill(); }
+  }
+
+  g.fillStyle = '#b4dd94'; g.beginPath(); g.moveTo(0, 800);
+  g.quadraticCurveTo(260, 720, 520, 790); g.quadraticCurveTo(780, 860, 1000, 770);
+  g.lineTo(1000, 1000); g.lineTo(0, 1000); g.fill();
+
+  gr = g.createLinearGradient(0, 840, 0, 1000);
+  gr.addColorStop(0, '#80c75c'); gr.addColorStop(1, '#4b9536');
+  g.fillStyle = gr; g.beginPath(); g.moveTo(0, 885); g.quadraticCurveTo(500, 820, 1000, 885);
+  g.lineTo(1000, 1000); g.lineTo(0, 1000); g.fill();
+
+  g.strokeStyle = '#3f8a2e'; g.lineWidth = 2;
+  for (let i = 0; i < 260; i++) { const x = R() * S, y = 880 + R() * 120;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + (R() - .5) * 8, y - 8 - R() * 12); g.stroke(); }
+
+  // ветви
+  const segs = [], tips = [];
+  function br(x, y, a, len, w, d) {
+    a = Math.max(-Math.PI + .2, Math.min(-.2, a));
+    const bend = (R() - .5) * .45;
+    const x2 = x + Math.cos(a) * len, y2 = y + Math.sin(a) * len;
+    segs.push([x, y, x + Math.cos(a + bend) * len * .5, y + Math.sin(a + bend) * len * .5, x2, y2, w]);
+    if (d === 0) { tips.push([x2, y2]); return; }
+    if (d <= 2) tips.push([x2, y2]);
+    const k = d >= 5 ? 2 : (R() < .45 ? 3 : 2);
+    for (let i = 0; i < k; i++) {
+      const spread = k === 2 ? (i ? .44 : -.44) : (i - 1) * .55;
+      br(x2, y2, a + spread + (R() - .5) * .35, len * (.7 + R() * .12), w * .66, d - 1);
+    }
+  }
+  br(500, 905, -Math.PI / 2, 200, 50, 6);
+
+  g.fillStyle = '#5d3d26'; g.beginPath();
+  g.moveTo(455, 910); g.quadraticCurveTo(480, 860, 478, 820); g.lineTo(522, 820);
+  g.quadraticCurveTo(520, 860, 548, 910); g.fill();
+
+  // фон и ствол без кроны: из него потом рисуем вторую картинку, с листвой
+  const base = document.createElement('canvas'); base.width = base.height = S;
+  base.getContext('2d').drawImage(c, 0, 0);
+
+  function branches(gg) {
+    gg.lineCap = 'round';
+    for (const s of segs) {
+      gg.strokeStyle = '#5d3d26'; gg.lineWidth = s[6];
+      gg.beginPath(); gg.moveTo(s[0], s[1]); gg.quadraticCurveTo(s[2], s[3], s[4], s[5]); gg.stroke();
+      if (s[6] > 6) { gg.strokeStyle = 'rgba(160,115,80,.45)'; gg.lineWidth = s[6] * .25;
+        gg.beginPath(); gg.moveTo(s[0] - s[6] * .2, s[1]); gg.quadraticCurveTo(s[2] - s[6] * .2, s[3], s[4] - s[6] * .2, s[5]); gg.stroke(); }
+    }
+  }
+
+  // ---- крона: сплошная шапка из кругов вокруг всех веток, без просветов ----
+  const cr = rngf(41), pts = [];
+  for (const [x0, y0, x1, y1, x2, y2, w] of segs) {
+    if (w >= 40) continue;                       // ствол до развилки остаётся открытым
+    for (let t = 0; t <= 1; t += .2) { const u = 1 - t;
+      const y = u * u * y0 + 2 * u * t * y1 + t * t * y2;
+      if (y < 640) pts.push([u * u * x0 + 2 * u * t * x1 + t * t * x2, y]); }
+  }
+  const circles = pts.map(([x, y]) => [x, y, 48 + cr() * 24]);
+  // заполняем середину кроны, чтобы не было дыр между ветками
+  const band = 30;
+  for (let by = Math.min(...pts.map(p => p[1])); by < 640; by += band) {
+    const row = pts.filter(p => p[1] >= by && p[1] < by + band);
+    if (row.length < 2) continue;
+    const mn = Math.min(...row.map(p => p[0])), mx = Math.max(...row.map(p => p[0]));
+    for (let x = mn; x <= mx; x += 34) circles.push([x, by + band / 2, 50 + cr() * 15]);
+  }
+  const top = Math.min(...circles.map(c => c[1] - c[2])), bottom = Math.max(...circles.map(c => c[1] + c[2]));
+  const left = Math.min(...circles.map(c => c[0] - c[2])), right = Math.max(...circles.map(c => c[0] + c[2]));
+  function inCrown(rnd, k = 1) {               // случайная точка внутри кроны
+    const [x, y, r] = circles[Math.floor(rnd() * circles.length)];
+    const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * r * k;
+    return [x + Math.cos(a) * d, y + Math.sin(a) * d];
+  }
+  const shades = ['#24561a', '#2f6b1f', '#3d7f28', '#4c9332', '#5ea63e', '#74ba4c', '#8ccd5f', '#a6dc78'];
+  // крона в три слоя: тёмная листва позади, ветви, пучки листьев спереди.
+  // Между пучками видно ветви, как у настоящего дерева.
+  function canopy(gg, rnd, count, lift) {
+    const lightAt = (x, y) => {   // свет сверху справа (от солнца), тень снизу
+      const ny = (y - top) / (bottom - top), nx = (x - left) / (right - left);
+      return 1.05 - ny * .95 + (nx - .5) * .35 + lift;
+    };
+    const drawLeaves = list => {
+      list.sort((a, b) => a[2] - b[2]);
+      for (const [x, y, light] of list) {
+        const s = shades[Math.max(0, Math.min(shades.length - 1, Math.floor(light * shades.length)))];
+        const len = 13 + rnd() * 9;
+        gg.save(); gg.translate(x, y); gg.rotate(rnd() * Math.PI * 2);
+        gg.fillStyle = s; gg.beginPath(); gg.moveTo(0, 0);
+        gg.quadraticCurveTo(len * .5, -len * .4, len, 0); gg.quadraticCurveTo(len * .5, len * .4, 0, 0); gg.fill();
+        gg.strokeStyle = 'rgba(20,50,15,.3)'; gg.lineWidth = 1;
+        gg.beginPath(); gg.moveTo(0, 0); gg.lineTo(len * .85, 0); gg.stroke();
+        gg.restore();
+      }
+    };
+    // 1. задний слой: тень внутри кроны и тёмные листья
+    gg.fillStyle = 'rgba(30,72,22,.9)';
+    for (const [x, y, r] of circles) { gg.beginPath(); gg.arc(x, y, r * .78, 0, Math.PI * 2); gg.fill(); }
+    const back = [];
+    for (let i = 0; i < count * .3; i++) {
+      const [x, y] = inCrown(rnd, .95);
+      back.push([x, y, lightAt(x, y) * .5 + (rnd() - .5) * .2]);
+    }
+    drawLeaves(back);
+    // 2. ветви поверх тёмной листвы
+    branches(gg);
+    // 3. передний слой: листья пучками, между пучками просветы
+    const front = [], perClump = 45;
+    for (let c = 0; c < count * .7 / perClump; c++) {
+      const [cx, cy] = inCrown(rnd, 1), cr = 18 + rnd() * 16;
+      for (let i = 0; i < perClump; i++) {
+        const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * cr;
+        const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
+        // у каждого пучка верх светлее низа
+        front.push([x, y, lightAt(x, y) + (cy - y) / cr * .2 + (rnd() - .5) * .35]);
+      }
+    }
+    drawLeaves(front);
+  }
+
+  canopy(g, rngf(31), 7000, .05);
+  // цветы
+  const petalCols = ['#ffffff', '#fff0f4', '#fcd3e0', '#f7b3c9'];
+  const flowers = [];
+  function flower(x, y, r) {
+    const col = petalCols[Math.floor(R() * petalCols.length)], rot = R() * Math.PI;
+    flowers.push({ x, y, r, col });
+    g.fillStyle = col; g.strokeStyle = 'rgba(214,120,150,.35)'; g.lineWidth = 1;
+    for (let i = 0; i < 5; i++) {
+      const a = rot + i * Math.PI * 2 / 5;
+      g.beginPath(); g.ellipse(x + Math.cos(a) * r * .6, y + Math.sin(a) * r * .6, r * .62, r * .45, a, 0, Math.PI * 2);
+      g.fill(); g.stroke();
+    }
+    g.fillStyle = '#f2c94c'; g.beginPath(); g.arc(x, y, r * .25, 0, Math.PI * 2); g.fill();
+  }
+  // цветы по всей кроне, сверху вниз, чтобы нижние были чуть прикрыты
+  const fl = [];
+  for (let c = 0; c < 110; c++) {               // цветы гроздьями, между ними видны листья и ветви
+    const [cx, cy] = inCrown(R, .95), cr = 16 + R() * 14;
+    for (let i = 0; i < 12; i++) { const a = R() * Math.PI * 2, d = Math.sqrt(R()) * cr;
+      fl.push([cx + Math.cos(a) * d, cy + Math.sin(a) * d]); }
+  }
+  fl.sort((a, b) => a[1] - b[1]);
+  for (const [x, y] of fl) flower(x, y, 8 + R() * 6);
+  // опавшие лепестки на траве
+  for (let i = 0; i < 60; i++) { g.fillStyle = petalCols[i % 4];
+    g.beginPath(); g.ellipse(250 + R() * 500, 900 + R() * 70, 4, 2.5, R() * 3, 0, Math.PI * 2); g.fill(); }
+
+  // места для яблок
+  // яблоки по всей кроне, не ближе 66 друг к другу
+  const apples = [];
+  for (let i = 0; i < 3000 && apples.length < 24; i++) {
+    const [x, y] = inCrown(R, .8);
+    if (apples.every(([ax, ay]) => Math.hypot(ax - x, ay - y) > 66)) apples.push([x, y]);
+  }
+
+  // вторая картинка: цветы опали, дерево в зелёной листве
+  const lf = document.createElement('canvas'); lf.width = lf.height = S;
+  const L = lf.getContext('2d'), R2 = rngf(23);
+  L.drawImage(base, 0, 0);
+  canopy(L, R2, 9500, 0);
+  for (let i = 0; i < 260; i++) { L.fillStyle = petalCols[i % 4];
+    L.beginPath(); L.ellipse(200 + R2() * 600, 895 + R2() * 85, 4.5, 2.8, R2() * 3, 0, Math.PI * 2); L.fill(); }
+
+  return { img: c, leafy: lf, apples, flowers };
+}
+
+function mix(a, b, k) {   // смешивает два цвета #rrggbb
+  const pa = [1, 3, 5].map(i => parseInt(a.substr(i, 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.substr(i, 2), 16));
+  return 'rgb(' + pa.map((v, i) => Math.round(v + (pb[i] - v) * k)).join(',') + ')';
+}
+function drawApple(g, x, y, r, ripe = 1) {
+  g.save(); g.translate(x, y);
+  g.strokeStyle = '#5b3a1e'; g.lineWidth = Math.max(1.5, r * .14); g.lineCap = 'round';
+  g.beginPath(); g.moveTo(0, -r * .7); g.quadraticCurveTo(r * .05, -r * 1.15, r * .25, -r * 1.35); g.stroke();
+  const gr = g.createRadialGradient(-r * .35, -r * .3, r * .1, 0, 0, r * 1.15);
+  gr.addColorStop(0, mix('#d4f08a', '#ff7262', ripe)); gr.addColorStop(.45, mix('#7cbf3a', '#d8221d', ripe));
+  gr.addColorStop(1, mix('#3f7a1c', '#7f0c10', ripe));
+  g.fillStyle = gr; g.beginPath();
+  g.moveTo(0, -r * .62);
+  g.bezierCurveTo(r * .5, -r * 1.05, r * 1.12, -r * .65, r * .98, r * .1);
+  g.bezierCurveTo(r * .88, r * .78, r * .42, r * 1.02, 0, r * .86);
+  g.bezierCurveTo(-r * .42, r * 1.02, -r * .88, r * .78, -r * .98, r * .1);
+  g.bezierCurveTo(-r * 1.12, -r * .65, -r * .5, -r * 1.05, 0, -r * .62);
+  g.fill();
+  g.fillStyle = 'rgba(255,255,255,.5)';
+  g.beginPath(); g.ellipse(-r * .45, -r * .3, r * .16, r * .28, -.5, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#4f9d34'; g.beginPath(); g.ellipse(r * .5, -r * 1.15, r * .38, r * .17, -.5, 0, Math.PI * 2); g.fill();
+  g.restore();
+}
+
+/* ---------- кусочки пазла ---------- */
+const TAB = [[[.42, 0], [.44, .06], [.38, .12]], [[.32, .20], [.40, .26], [.50, .26]],
+             [[.60, .26], [.68, .20], [.62, .12]], [[.56, .06], [.58, 0], [.62, 0]]];
+function edge(p, x1, y1, x2, y2, t) {
+  if (!t) { p.lineTo(x2, y2); return; }
+  const dx = x2 - x1, dy = y2 - y1, nx = dy * t, ny = -dx * t;
+  const P = (u, v) => [x1 + dx * u + nx * v, y1 + dy * u + ny * v];
+  p.lineTo(...P(.38, 0));
+  for (const [a, b, e] of TAB) p.bezierCurveTo(...P(...a), ...P(...b), ...P(...e));
+  p.lineTo(x2, y2);
+}
+function makePieces() {
+  pw = S / n; ph = S / n;
+  const h = [], v = [], rnd = () => Math.random() < .5 ? 1 : -1;
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) { h[r * n + c] = rnd(); v[r * n + c] = rnd(); }
+  pieces = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) {
+    const top = r > 0 ? -h[r * n + c] : 0, bottom = r < n - 1 ? h[(r + 1) * n + c] : 0;
+    const left = c > 0 ? -v[r * n + c] : 0, right = c < n - 1 ? v[r * n + c + 1] : 0;
+    const path = new Path2D(); path.moveTo(0, 0);
+    edge(path, 0, 0, pw, 0, top); edge(path, pw, 0, pw, ph, right);
+    edge(path, pw, ph, 0, ph, bottom); edge(path, 0, ph, 0, 0, left); path.closePath();
+    pieces.push({ r, c, path, px: 0, py: 0, locked: false, heldBy: null });
+  }
+  scatter();
+}
+function scatter() {
+  const k = board.k, pwS = pw * k, phS = ph * k, m = .3 * pwS, top = 70;
+  const placed = pieces.filter(p => p.locked).map(p => [board.x + p.px * k, board.y + p.py * k]);
+  for (const p of pieces) {
+    if (p.locked || p.heldBy) continue;
+    let best = null, bestScore = -1;
+    for (let i = 0; i < 60; i++) {
+      const sx = m + Math.random() * Math.max(1, W - pwS - 2 * m);
+      const sy = top + m + Math.random() * Math.max(1, H - top - phS - 2 * m);
+      const onBoard = sx + pwS + m > board.x && sx - m < board.x + board.size && sy + phS + m > board.y && sy - m < board.y + board.size;
+      let d = placed.reduce((mn, [x, y]) => Math.min(mn, Math.hypot(x - sx, y - sy)), 1e9);
+      const score = (onBoard ? 0 : 1e6) + Math.min(d, 1e5);
+      if (score > bestScore) { bestScore = score; best = [sx, sy]; }
+    }
+    placed.push(best);
+    p.px = (best[0] - board.x) / k; p.py = (best[1] - board.y) / k;
+  }
+}
+function layout() {
+  dpr = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const top = 70;
+  const size = W < 760 ? Math.min(W * .78, (H - top) * .55) : Math.min((H - top) * .8, W * .44);
+  board.size = size; board.k = size / S;
+  board.x = (W - size) / 2; board.y = top + (H - top - size) / 2;
+  if (pieces.length) scatter();   // окно изменилось: раскладываем свободные кусочки заново
+}
+
+/* ---------- звук ---------- */
+function tone(f, t0, dur, vol = .15) {
+  if (!audio) return;
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = 'sine'; o.frequency.value = f; o.connect(g); g.connect(audio.destination);
+  const t = audio.currentTime + t0;
+  g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(vol, t + .01);
+  g.gain.exponentialRampToValueAtTime(.001, t + dur); o.start(t); o.stop(t + dur);
+}
+function initAudio() { try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+
+/* ---------- захват и перенос ---------- */
+function toLocal(x, y) { return [(x - board.x) / board.k, (y - board.y) / board.k]; }
+function pointerDown(id, x, y, isHand) {
+  const st = { x, y, held: null, ox: 0, oy: 0 }; pointers.set(id, st);
+  if (isHand) {   // щипок по кнопке нажимает её
+    const el = document.elementFromPoint(x, y);
+    if (el && el.tagName === 'BUTTON') { el.click(); return; }
+  }
+  if (state !== 'play') return;
+  const [lx0, ly0] = toLocal(x, y);
+  const pad = isHand ? pw * .12 : 0;
+  for (let i = pieces.length - 1; i >= 0; i--) {
+    const p = pieces[i]; if (p.locked || p.heldBy) continue;
+    const lx = lx0 - p.px, ly = ly0 - p.py;
+    if (hitCtx.isPointInPath(p.path, lx, ly) || (lx > -pad && lx < pw + pad && ly > -pad && ly < ph + pad)) {
+      p.heldBy = id; st.held = p; st.ox = lx; st.oy = ly;
+      pieces.splice(i, 1); pieces.push(p);
+      tone(520, 0, .08, .06); break;
+    }
+  }
+}
+function pointerMove(id, x, y) {
+  const st = pointers.get(id); if (!st) return;
+  st.x = x; st.y = y;
+  if (st.held) { const [lx, ly] = toLocal(x, y); st.held.px = lx - st.ox; st.held.py = ly - st.oy; }
+}
+function pointerUp(id) {
+  const st = pointers.get(id); if (!st) return;
+  pointers.delete(id);
+  const p = st.held; if (!p) return;
+  p.heldBy = null;
+  const tx = p.c * pw, ty = p.r * ph;
+  if (Math.abs(p.px - tx) < pw * .22 && Math.abs(p.py - ty) < ph * .22) {
+    p.px = tx; p.py = ty; p.locked = true;
+    pieces.splice(pieces.indexOf(p), 1); pieces.unshift(p);
+    fx.push({ x: tx + pw / 2, y: ty + ph / 2, t: performance.now() });
+    tone(660, 0, .25); tone(990, .08, .3, .1);
+    updateStatus();
+    if (pieces.every(q => q.locked)) finish();
+  }
+}
+
+const FALL_START = 1000, FALL_END = 9000, APPLE_START = 9000, APPLE_STEP = 150, APPLE_GROW = 5000;   // мс после сборки
+function finish() {
+  state = 'done'; doneT = performance.now();
+  [523, 659, 784, 1047].forEach((f, i) => tone(f, .3 + i * .15, .6, .12));
+  tree.apples.forEach((_, i) => tone(880 + (i % 4) * 110, (APPLE_START + i * APPLE_STEP) / 1000, .2, .04));
+  // каждый цветок срывается в своё время и падает на траву
+  petals = tree.flowers.map(f => ({ x: f.x, y: f.y, c: f.col, size: f.r * .55,
+    t0: FALL_START + Math.pow(Math.random(), .8) * (FALL_END - FALL_START - 2500),
+    vx: (Math.random() - .5) * 14, vy: 0, max: 50 + Math.random() * 35,
+    rot: Math.random() * 6, vr: (Math.random() - .5) * 4, ground: 890 + Math.random() * 85, landed: 0, ph: Math.random() * 6 }));
+  setTimeout(() => { if (state === 'done') $('#done').style.display = 'block'; }, APPLE_START + tree.apples.length * APPLE_STEP + APPLE_GROW);
+}
+function newGame(size) {
+  if (size) n = size;
+  state = 'play'; $('#done').style.display = 'none';
+  for (const st of pointers.values()) st.held = null;
+  fx = []; petals = [];
+  makePieces(); updateStatus();
+  document.querySelectorAll('.size').forEach(b => b.classList.toggle('on', +b.dataset.n === n));
+}
+function updateStatus() {
+  const k = pieces.filter(p => p.locked).length;
+  let s = `Собрано: ${k} из ${pieces.length}`;
+  if (camOn) s += modelStatus ? ` | ${modelStatus}` : ` | Рук в кадре: ${Object.values(hands).filter(h => h.seen).length}`;
+  $('#status').textContent = s;
+}
+
+/* ---------- мышь и касание ---------- */
+cv.addEventListener('pointerdown', e => { initAudio(); cv.setPointerCapture(e.pointerId); pointerDown('p' + e.pointerId, e.clientX, e.clientY, false); });
+cv.addEventListener('pointermove', e => pointerMove('p' + e.pointerId, e.clientX, e.clientY));
+cv.addEventListener('pointerup', e => pointerUp('p' + e.pointerId));
+cv.addEventListener('pointercancel', e => pointerUp('p' + e.pointerId));
+
+/* ---------- камера и руки ---------- */
+function videoCover() {
+  const vw = video.videoWidth || 1280, vh = video.videoHeight || 720;
+  const s = Math.max(W / vw, H / vh), dw = vw * s, dh = vh * s;
+  return { ox: (W - dw) / 2, oy: (H - dh) / 2, dw, dh };
+}
+async function startCamera() {
+  initAudio();
+  const msg = t => { $('#introMsg').textContent = t; };
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    msg('Браузер не даёт доступ к камере. Откройте файл в Google Chrome или играйте мышью.'); return; }
+  msg('Жду разрешения на камеру...');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' }, audio: false });
+    video.srcObject = stream; await video.play(); camOn = true;
+  } catch (e) { msg('Камера не включилась: ' + e.message + '. Разрешите камеру в браузере или играйте мышью.'); return; }
+  $('#intro').style.display = 'none';
+  $('#camToggle').textContent = 'Выключить камеру';
+  modelStatus = 'загружаю распознавание рук...'; updateStatus();
+  try {
+    const base = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14';
+    const vision = await import(base + '/vision_bundle.mjs');
+    const files = await vision.FilesetResolver.forVisionTasks(base + '/wasm');
+    const opts = d => ({ baseOptions: { modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task', delegate: d },
+      runningMode: 'VIDEO', numHands: 2, minHandDetectionConfidence: .5, minTrackingConfidence: .5 });
+    try { landmarker = await vision.HandLandmarker.createFromOptions(files, opts('GPU')); }
+    catch (e) { landmarker = await vision.HandLandmarker.createFromOptions(files, opts('CPU')); }
+    modelStatus = '';
+  } catch (e) { modelStatus = 'распознавание рук не загрузилось, нужен интернет'; }
+  updateStatus();
+}
+function stopCamera() {
+  if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop());
+  video.srcObject = null; camOn = false;
+  for (const id in hands) { pointerUp(id); delete hands[id]; }
+  $('#camToggle').textContent = 'Включить камеру'; updateStatus();
+}
+function handleHands(res) {
+  const vc = videoCover();
+  const toS = lm => [W - (vc.ox + lm.x * vc.dw), vc.oy + lm.y * vc.dh];
+  const seenNow = new Set();
+  (res.landmarks || []).forEach((lms, i) => {
+    const label = (res.handednesses && res.handednesses[i] && res.handednesses[i][0].categoryName) || ('h' + i);
+    let id = 'hand-' + label; if (seenNow.has(id)) id += i;
+    seenNow.add(id);
+    const th = toS(lms[4]), ix = toS(lms[8]), wr = toS(lms[0]), mid = toS(lms[9]);
+    const palm = Math.max(20, Math.hypot(wr[0] - mid[0], wr[1] - mid[1]));
+    const ratio = Math.hypot(th[0] - ix[0], th[1] - ix[1]) / palm;
+    const tx = (th[0] + ix[0]) / 2, ty = (th[1] + ix[1]) / 2;
+    const h = hands[id] || (hands[id] = { x: tx, y: ty, pinch: false });
+    h.seen = true; h.lost = 0;
+    h.x += (tx - h.x) * .55; h.y += (ty - h.y) * .55;
+    h.th = th; h.ix = ix;
+    const was = h.pinch;
+    if (!was && ratio < .32) h.pinch = true;
+    else if (was && ratio > .48) h.pinch = false;
+    if (h.pinch && !was) pointerDown(id, h.x, h.y, true);
+    else if (h.pinch) pointerMove(id, h.x, h.y);
+    else if (was) pointerUp(id);
+  });
+  for (const id in hands) if (!seenNow.has(id)) {
+    const h = hands[id]; h.seen = false;
+    if (++h.lost > 8) { if (h.pinch) pointerUp(id); delete hands[id]; }
+  }
+  updateStatus();
+}
+
+/* ---------- отрисовка ---------- */
+const easeBack = t => { const c = 1.7; return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2); };
+let lastT = performance.now();
+function draw(t) {
+  const dt = Math.min(.05, (t - lastT) / 1000); lastT = t;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (camOn && video.readyState >= 2) {
+    const vc = videoCover();
+    ctx.save(); ctx.translate(W, 0); ctx.scale(-1, 1); ctx.drawImage(video, vc.ox, vc.oy, vc.dw, vc.dh); ctx.restore();
+    ctx.fillStyle = 'rgba(8,12,20,.38)'; ctx.fillRect(0, 0, W, H);
+  } else {
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#233447'); g.addColorStop(1, '#0f1720');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+  const k = board.k;
+  // поле
+  ctx.save(); ctx.translate(board.x, board.y); ctx.scale(k, k);
+  ctx.shadowColor = 'rgba(0,0,0,.5)'; ctx.shadowBlur = 30 / k * k;
+  ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(-12, -12, S + 24, S + 24); ctx.shadowBlur = 0;
+  ctx.globalAlpha = .22; ctx.drawImage(tree.img, 0, 0); ctx.globalAlpha = 1;
+  ctx.strokeStyle = 'rgba(255,255,255,.18)'; ctx.lineWidth = 1.5 / k;
+  for (let i = 1; i < n; i++) { ctx.beginPath(); ctx.moveTo(i * pw, 0); ctx.lineTo(i * pw, S); ctx.moveTo(0, i * ph); ctx.lineTo(S, i * ph); ctx.stroke(); }
+  ctx.restore();
+
+  // кусочки
+  const outline = state === 'done' ? Math.max(0, 1 - (t - doneT) / 900) : 1;
+  for (const p of pieces) {
+    const sx = board.x + p.px * k, sy = board.y + p.py * k;
+    ctx.save(); ctx.translate(sx, sy); ctx.scale(k, k);
+    if (p.heldBy) { ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 25; ctx.shadowOffsetY = 10;
+      ctx.fillStyle = '#000'; ctx.fill(p.path); ctx.shadowColor = 'transparent'; }
+    else if (!p.locked) { ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
+      ctx.fillStyle = '#000'; ctx.fill(p.path); ctx.shadowColor = 'transparent'; }
+    ctx.save(); ctx.clip(p.path); ctx.drawImage(tree.img, -p.c * pw, -p.r * ph); ctx.restore();
+    if (outline > 0) {
+      ctx.lineWidth = (p.heldBy ? 4 : 2) / k;
+      ctx.strokeStyle = p.heldBy ? 'rgba(255,90,90,.95)' : `rgba(255,255,255,${(p.locked ? .35 : .85) * outline})`;
+      ctx.stroke(p.path);
+    }
+    ctx.restore();
+  }
+
+  // вспышки при установке кусочка
+  ctx.save(); ctx.translate(board.x, board.y); ctx.scale(k, k);
+  fx = fx.filter(f => t - f.t < 600);
+  for (const f of fx) { const q = Math.max(0, (t - f.t) / 600);
+    ctx.strokeStyle = `rgba(255,230,120,${1 - q})`; ctx.lineWidth = 8 * (1 - q) + 1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, 30 + q * pw * .6, 0, Math.PI * 2); ctx.stroke(); }
+
+  if (state === 'done') {
+    const e = (t - doneT) / 1000;
+    ctx.globalAlpha = Math.min(1, e / .9); ctx.drawImage(tree.img, 0, 0); ctx.globalAlpha = 1;
+    // цветы опадают, проступает зелёная листва
+    const ms = t - doneT;
+    const leafA = Math.min(1, Math.max(0, (ms - FALL_START) / (FALL_END - FALL_START)));
+    if (leafA > 0) { ctx.globalAlpha = leafA; ctx.drawImage(tree.leafy, 0, 0); ctx.globalAlpha = 1; }
+    if (e < .6) { ctx.fillStyle = `rgba(255,255,255,${.6 * (1 - e / .6)})`; ctx.fillRect(0, 0, S, S); }
+    for (const p of petals) {
+      if (ms < p.t0) continue;
+      if (!p.landed) {
+        p.vy = Math.min(p.max, p.vy + 40 * dt);
+        p.x += (p.vx + Math.sin(t / 700 + p.ph) * 22) * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+        if (p.y >= p.ground) { p.y = p.ground; p.landed = ms; }
+      }
+      const fade = p.landed ? Math.max(0, 1 - (ms - p.landed) / 1500) : 1;
+      if (fade <= 0) continue;
+      ctx.save(); ctx.globalAlpha = fade; ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.c;
+      ctx.beginPath(); ctx.ellipse(0, 0, p.size * 1.6, p.size, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+    }
+    tree.apples.forEach(([x, y], i) => {
+      // маленькое зелёное яблочко растёт и краснеет
+      const q = Math.min(1, Math.max(0, (ms - APPLE_START - i * APPLE_STEP) / APPLE_GROW));
+      if (q <= 0) return;
+      const grow = 1 - Math.pow(1 - q, 2);
+      const sway = Math.sin(t / 700 + i) * .06;
+      ctx.save(); ctx.translate(x, y - 20); ctx.rotate(sway);
+      drawApple(ctx, 0, 20, 4 + 20 * grow, Math.min(1, Math.max(0, (q - .25) / .7))); ctx.restore();
+    });
+  }
+  ctx.restore();
+
+  // пальцы
+  for (const id in hands) {
+    const h = hands[id]; if (!h.seen || !h.th) continue;
+    ctx.strokeStyle = h.pinch ? '#ff5a5a' : 'rgba(255,255,255,.9)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(...h.th); ctx.lineTo(...h.ix); ctx.stroke();
+    for (const pt of [h.th, h.ix]) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(pt[0], pt[1], 7, 0, Math.PI * 2); ctx.fill(); }
+    ctx.beginPath(); ctx.arc(h.x, h.y, h.pinch ? 14 : 20, 0, Math.PI * 2);
+    ctx.fillStyle = h.pinch ? 'rgba(220,40,40,.8)' : 'rgba(255,255,255,.15)'; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = h.pinch ? '#fff' : '#ff5a5a'; ctx.stroke();
+  }
+}
+function frame(t) {
+  requestAnimationFrame(frame);
+  if (camOn && landmarker && video.readyState >= 2 && video.currentTime !== lastVT) {
+    lastVT = video.currentTime;
+    try { handleHands(landmarker.detectForVideo(video, performance.now())); } catch (e) {}
+  }
+  draw(t);
+}
+
+/* ---------- кнопки ---------- */
+$('#btnCam').onclick = startCamera;
+$('#btnMouse').onclick = () => { initAudio(); $('#intro').style.display = 'none'; };
+$('#camToggle').onclick = () => camOn ? stopCamera() : startCamera();
+$('#shuffle').onclick = () => { if (state === 'play') { for (const p of pieces) if (!p.heldBy) p.locked = false; scatter(); updateStatus(); } };
+$('#again').onclick = () => newGame();
+document.querySelectorAll('.size').forEach(b => b.onclick = () => newGame(+b.dataset.n));
+addEventListener('resize', layout);
+
+window.__pazl = { get pieces() { return pieces; }, board, get pw() { return pw; } };
+tree = makeTree();
+layout(); newGame(3);
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
