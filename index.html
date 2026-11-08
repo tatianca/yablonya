@@ -8,7 +8,7 @@
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1720; color: #fff;
     font-family: 'Times New Roman', Times, serif; font-variant-numeric: lining-nums; font-size: 20px; line-height: 1.7; }
   video { display: none; }
-  #c { position: fixed; inset: 0; width: 100vw; height: 100vh; touch-action: none; }
+  #c { position: fixed; left: 0; top: 0; touch-action: none; }
   #ui { position: fixed; top: 10px; left: 10px; right: 10px; display: flex; gap: 10px; align-items: center;
     flex-wrap: wrap; z-index: 5; pointer-events: none; }
   #ui > * { pointer-events: auto; }
@@ -17,9 +17,9 @@
   button:hover { background: rgba(192,40,40,.75); }
   button.on { background: #c0392b; }
   #status { font-size: 20px; background: rgba(0,0,0,.6); padding: 6px 14px; border-radius: 10px; }
-  .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 10;
+  .overlay { position: fixed; inset: 0; display: flex; z-index: 10; overflow-y: auto; -webkit-overflow-scrolling: touch;
     background: rgba(10,16,24,.82); }
-  .card { max-width: 680px; margin: 20px; padding: 28px 34px; border-radius: 18px; background: #fffaf3; color: #2b1d14;
+  .card { max-width: 680px; margin: auto; padding: 28px 34px; border-radius: 18px; background: #fffaf3; color: #2b1d14;
     box-shadow: 0 20px 60px rgba(0,0,0,.5); }
   .card h1 { margin: 0 0 10px; font-size: 40px; color: #a61e1e; line-height: 1.2; }
   .card p { margin: 0 0 16px; font-size: 21px; }
@@ -31,6 +31,19 @@
     box-shadow: 0 10px 40px rgba(0,0,0,.45); }
   #done b { font-size: 26px; color: #a61e1e; }
   #done button { color: #fff; background: #b3261e; border-color: #b3261e; margin-left: 14px; }
+  @media (max-width: 760px) {
+    #ui { top: 6px; left: 6px; right: 6px; gap: 5px; }
+    #ui button { font-size: 17px; padding: 2px 8px; }
+    #status { font-size: 17px; padding: 2px 8px; }
+    .card { margin: auto 10px; padding: 16px 18px; }
+    .card h1 { font-size: 30px; margin-bottom: 6px; }
+    .card p { font-size: 19px; line-height: 1.6; margin-bottom: 10px; }
+    .card button { display: block; width: 100%; font-size: 20px; margin: 8px 0; padding: 10px 12px; }
+    #introMsg { margin-bottom: 0; }
+    #done { left: 8px; right: 8px; bottom: 8px; transform: none; padding: 8px 12px; font-size: 19px; line-height: 1.5; }
+    #done b { font-size: 22px; display: block; }
+    #done button { margin: 6px 0 0; font-size: 19px; }
+  }
 </style>
 </head>
 <body>
@@ -55,7 +68,7 @@
     <p>Сведите большой и указательный палец вместе, чтобы взять кусочек. Разведите пальцы, чтобы его отпустить. Кусочек рядом со своим местом встанет туда сам.</p>
     <p>Когда картинка сложится, на яблоне появятся красные яблоки.</p>
     <button id="btnCam">Включить камеру</button>
-    <button id="btnMouse" class="alt">Играть мышью</button>
+    <button id="btnMouse" class="alt">Играть без камеры</button>
     <p id="introMsg"></p>
   </div>
 </div>
@@ -134,7 +147,7 @@ function makeTree() {
       br(x2, y2, a + spread + (R() - .5) * .35, len * (.7 + R() * .12), w * .66, d - 1);
     }
   }
-  br(500, 905, -Math.PI / 2, 200, 50, 6);
+  br(500, 905, -Math.PI / 2, 250, 50, 5);
 
   g.fillStyle = '#5d3d26'; g.beginPath();
   g.moveTo(455, 910); g.quadraticCurveTo(480, 860, 478, 820); g.lineTo(522, 820);
@@ -147,6 +160,8 @@ function makeTree() {
   function branches(gg) {
     gg.lineCap = 'round';
     for (const s of segs) {
+      const ex = (s[4] - ccx) / crx, ey = (s[5] - ccy) / cry;
+      if (ex * ex + ey * ey > .8) continue;      // веточки не торчат из кроны
       gg.strokeStyle = '#5d3d26'; gg.lineWidth = s[6];
       gg.beginPath(); gg.moveTo(s[0], s[1]); gg.quadraticCurveTo(s[2], s[3], s[4], s[5]); gg.stroke();
       if (s[6] > 6) { gg.strokeStyle = 'rgba(160,115,80,.45)'; gg.lineWidth = s[6] * .25;
@@ -154,77 +169,68 @@ function makeTree() {
     }
   }
 
-  // ---- крона: сплошная шапка из кругов вокруг всех веток, без просветов ----
-  const cr = rngf(41), pts = [];
-  for (const [x0, y0, x1, y1, x2, y2, w] of segs) {
-    if (w >= 40) continue;                       // ствол до развилки остаётся открытым
-    for (let t = 0; t <= 1; t += .2) { const u = 1 - t;
-      const y = u * u * y0 + 2 * u * t * y1 + t * t * y2;
-      if (y < 640) pts.push([u * u * x0 + 2 * u * t * x1 + t * t * x2, y]); }
+  // ---- крона: пышный округлый шар листвы, снизу под ней видно ствол и ветви ----
+  const ccx = 500, ccy = 385, crx = 405, cry = 320;
+  const top = ccy - cry * 1.1, bottom = ccy + cry * 1.1, left = ccx - crx * 1.1, right = ccx + crx * 1.1;
+  function inShape(x, y, k) {
+    const dx = (x - ccx) / crx, dy = (y - ccy) / cry, th = Math.atan2(dy, dx);
+    const lump = 1 + .06 * Math.sin(5 * th + 1) + .04 * Math.sin(9 * th + 2);
+    if (dx * dx + dy * dy > (k * lump) ** 2) return false;
+    return !(y > 550 && Math.abs(x - ccx) < (y - 550) * 1.25);   // просвет снизу: там видны ветви
   }
-  const circles = pts.map(([x, y]) => [x, y, 48 + cr() * 24]);
-  // заполняем середину кроны, чтобы не было дыр между ветками
-  const band = 30;
-  for (let by = Math.min(...pts.map(p => p[1])); by < 640; by += band) {
-    const row = pts.filter(p => p[1] >= by && p[1] < by + band);
-    if (row.length < 2) continue;
-    const mn = Math.min(...row.map(p => p[0])), mx = Math.max(...row.map(p => p[0]));
-    for (let x = mn; x <= mx; x += 34) circles.push([x, by + band / 2, 50 + cr() * 15]);
-  }
-  const top = Math.min(...circles.map(c => c[1] - c[2])), bottom = Math.max(...circles.map(c => c[1] + c[2]));
-  const left = Math.min(...circles.map(c => c[0] - c[2])), right = Math.max(...circles.map(c => c[0] + c[2]));
   function inCrown(rnd, k = 1) {               // случайная точка внутри кроны
-    const [x, y, r] = circles[Math.floor(rnd() * circles.length)];
-    const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * r * k;
-    return [x + Math.cos(a) * d, y + Math.sin(a) * d];
+    for (let i = 0; i < 300; i++) {
+      const x = left + rnd() * (right - left), y = top + rnd() * (bottom - top);
+      if (inShape(x, y, k)) return [x, y];
+    }
+    return [ccx, ccy];
   }
-  const shades = ['#24561a', '#2f6b1f', '#3d7f28', '#4c9332', '#5ea63e', '#74ba4c', '#8ccd5f', '#a6dc78'];
-  // крона в три слоя: тёмная листва позади, ветви, пучки листьев спереди.
-  // Между пучками видно ветви, как у настоящего дерева.
-  function canopy(gg, rnd, count, lift) {
-    const lightAt = (x, y) => {   // свет сверху справа (от солнца), тень снизу
-      const ny = (y - top) / (bottom - top), nx = (x - left) / (right - left);
-      return 1.05 - ny * .95 + (nx - .5) * .35 + lift;
-    };
-    const drawLeaves = list => {
-      list.sort((a, b) => a[2] - b[2]);
-      for (const [x, y, light] of list) {
-        const s = shades[Math.max(0, Math.min(shades.length - 1, Math.floor(light * shades.length)))];
-        const len = 13 + rnd() * 9;
-        gg.save(); gg.translate(x, y); gg.rotate(rnd() * Math.PI * 2);
-        gg.fillStyle = s; gg.beginPath(); gg.moveTo(0, 0);
-        gg.quadraticCurveTo(len * .5, -len * .4, len, 0); gg.quadraticCurveTo(len * .5, len * .4, 0, 0); gg.fill();
-        gg.strokeStyle = 'rgba(20,50,15,.3)'; gg.lineWidth = 1;
-        gg.beginPath(); gg.moveTo(0, 0); gg.lineTo(len * .85, 0); gg.stroke();
-        gg.restore();
-      }
-    };
-    // 1. задний слой: тень внутри кроны и тёмные листья
-    gg.fillStyle = 'rgba(30,72,22,.9)';
-    for (const [x, y, r] of circles) { gg.beginPath(); gg.arc(x, y, r * .78, 0, Math.PI * 2); gg.fill(); }
-    const back = [];
-    for (let i = 0; i < count * .3; i++) {
-      const [x, y] = inCrown(rnd, .95);
-      back.push([x, y, lightAt(x, y) * .5 + (rnd() - .5) * .2]);
+  const greens = ['#154a16', '#1c5a1b', '#267023', '#32832b', '#439735', '#58aa42'];
+  function drawLeaf(gg, x, y, a, len, light) {
+    const wid = len * .3;
+    gg.save(); gg.translate(x, y); gg.rotate(a);
+    gg.fillStyle = greens[Math.max(0, Math.min(greens.length - 1, Math.floor(light * greens.length)))];
+    gg.beginPath(); gg.moveTo(0, 0);
+    gg.bezierCurveTo(len * .2, -wid, len * .7, -wid * .75, len, 0);
+    gg.bezierCurveTo(len * .7, wid * .75, len * .2, wid, 0, 0); gg.fill();
+    // блеск на половине листа
+    gg.fillStyle = 'rgba(255,255,255,.1)';
+    gg.beginPath(); gg.moveTo(0, 0);
+    gg.bezierCurveTo(len * .2, -wid, len * .7, -wid * .75, len, 0); gg.closePath(); gg.fill();
+    gg.strokeStyle = 'rgba(200,235,160,.4)'; gg.lineWidth = 1;
+    gg.beginPath(); gg.moveTo(0, 0); gg.lineTo(len * .92, 0); gg.stroke();
+    gg.restore();
+  }
+  const lightAt = (x, y) => {   // свет сверху справа (от солнца), тень снизу
+    const ny = (y - top) / (bottom - top), nx = (x - left) / (right - left);
+    return 1 - ny * .85 + (nx - .5) * .3;
+  };
+  // крона в три слоя: тень и тёмные листья позади, ветви, веточки листьев спереди
+  function canopy(gg, rnd, count) {
+    gg.fillStyle = '#123f14';
+    for (let i = 0; i < 300; i++) {
+      const [x, y] = inCrown(rnd, .88);
+      gg.beginPath(); gg.arc(x, y, 24 + rnd() * 16, 0, Math.PI * 2); gg.fill();
     }
-    drawLeaves(back);
-    // 2. ветви поверх тёмной листвы
+    for (let i = 0; i < count * .25; i++) {
+      const [x, y] = inCrown(rnd, .98);
+      drawLeaf(gg, x, y, rnd() * Math.PI * 2, 20 + rnd() * 12, lightAt(x, y) * .4);
+    }
     branches(gg);
-    // 3. передний слой: листья пучками, между пучками просветы
-    const front = [], perClump = 45;
-    for (let c = 0; c < count * .7 / perClump; c++) {
-      const [cx, cy] = inCrown(rnd, 1), cr = 18 + rnd() * 16;
-      for (let i = 0; i < perClump; i++) {
-        const a = rnd() * Math.PI * 2, d = Math.sqrt(rnd()) * cr;
+    const front = [], perSprig = 14;
+    for (let c = 0; c < count * .75 / perSprig; c++) {
+      const [cx, cy] = inCrown(rnd, .98), a0 = rnd() * Math.PI * 2;
+      for (let i = 0; i < perSprig; i++) {
+        const a = a0 + i * .45 + (rnd() - .5) * .5, d = rnd() * 26;
         const x = cx + Math.cos(a) * d, y = cy + Math.sin(a) * d;
-        // у каждого пучка верх светлее низа
-        front.push([x, y, lightAt(x, y) + (cy - y) / cr * .2 + (rnd() - .5) * .35]);
+        front.push([x, y, a, lightAt(x, y) + (cy - y) / 80 + (rnd() - .5) * .3]);
       }
     }
-    drawLeaves(front);
+    front.sort((p, q) => p[3] - q[3]);          // светлые листья ложатся поверх тёмных
+    for (const [x, y, a, l] of front) drawLeaf(gg, x, y, a, 24 + rnd() * 14, l);
   }
 
-  canopy(g, rngf(31), 7000, .05);
+  canopy(g, rngf(31), 6000);
   // цветы
   const petalCols = ['#ffffff', '#fff0f4', '#fcd3e0', '#f7b3c9'];
   const flowers = [];
@@ -241,7 +247,7 @@ function makeTree() {
   }
   // цветы по всей кроне, сверху вниз, чтобы нижние были чуть прикрыты
   const fl = [];
-  for (let c = 0; c < 110; c++) {               // цветы гроздьями, между ними видны листья и ветви
+  for (let c = 0; c < 170; c++) {             // цветы гроздьями, между ними видны листья и ветви
     const [cx, cy] = inCrown(R, .95), cr = 16 + R() * 14;
     for (let i = 0; i < 12; i++) { const a = R() * Math.PI * 2, d = Math.sqrt(R()) * cr;
       fl.push([cx + Math.cos(a) * d, cy + Math.sin(a) * d]); }
@@ -255,20 +261,31 @@ function makeTree() {
   // места для яблок
   // яблоки по всей кроне, не ближе 66 друг к другу
   const apples = [];
-  for (let i = 0; i < 3000 && apples.length < 24; i++) {
-    const [x, y] = inCrown(R, .8);
-    if (apples.every(([ax, ay]) => Math.hypot(ax - x, ay - y) > 66)) apples.push([x, y]);
+  for (let i = 0; i < 4000 && apples.length < 30; i++) {
+    const [x, y] = inCrown(R, .9);
+    if (apples.every(([ax, ay]) => Math.hypot(ax - x, ay - y) > 84)) apples.push([x, y]);
   }
 
   // вторая картинка: цветы опали, дерево в зелёной листве
   const lf = document.createElement('canvas'); lf.width = lf.height = S;
   const L = lf.getContext('2d'), R2 = rngf(23);
   L.drawImage(base, 0, 0);
-  canopy(L, R2, 9500, 0);
+  canopy(L, R2, 7500);
   for (let i = 0; i < 260; i++) { L.fillStyle = petalCols[i % 4];
     L.beginPath(); L.ellipse(200 + R2() * 600, 895 + R2() * 85, 4.5, 2.8, R2() * 3, 0, Math.PI * 2); L.fill(); }
 
-  return { img: c, leafy: lf, apples, flowers };
+  // листочки, которые лежат поверх яблок и немного их прикрывают
+  const ov = document.createElement('canvas'); ov.width = ov.height = S;
+  const O = ov.getContext('2d');
+  for (const [x, y] of apples) {
+    const n = 1 + Math.floor(R2() * 2);
+    for (let i = 0; i < n; i++) {
+      const a = R2() * Math.PI * 2, px = x + Math.cos(a) * 44, py = y + Math.sin(a) * 44;
+      drawLeaf(O, px, py, a + Math.PI + (R2() - .5) * .9, 28 + R2() * 8, lightAt(px, py) + .1);
+    }
+  }
+
+  return { img: c, leafy: lf, over: ov, apples, flowers };
 }
 
 function mix(a, b, k) {   // смешивает два цвета #rrggbb
@@ -322,7 +339,7 @@ function makePieces() {
   scatter();
 }
 function scatter() {
-  const k = board.k, pwS = pw * k, phS = ph * k, m = .3 * pwS, top = 70;
+  const k = board.k, pwS = pw * k, phS = ph * k, m = .3 * pwS, top = uiBottom();
   const placed = pieces.filter(p => p.locked).map(p => [board.x + p.px * k, board.y + p.py * k]);
   for (const p of pieces) {
     if (p.locked || p.heldBy) continue;
@@ -339,14 +356,19 @@ function scatter() {
     p.px = (best[0] - board.x) / k; p.py = (best[1] - board.y) / k;
   }
 }
+function uiBottom() { return $('#ui').getBoundingClientRect().bottom + 8; }   // где заканчиваются кнопки вверху
 function layout() {
+  const oldW = W, oldH = H;
   dpr = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
   cv.width = W * dpr; cv.height = H * dpr;
-  const top = 70;
-  const size = W < 760 ? Math.min(W * .78, (H - top) * .55) : Math.min((H - top) * .8, W * .44);
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  const top = uiBottom(), narrow = W < 760 && H > W;
+  // на телефоне поле вверху, кусочки под ним
+  const size = narrow ? Math.min(W * .8, (H - top) * .5) : Math.min((H - top) * .8, W * .44);
   board.size = size; board.k = size / S;
-  board.x = (W - size) / 2; board.y = top + (H - top - size) / 2;
-  if (pieces.length) scatter();   // окно изменилось: раскладываем свободные кусочки заново
+  board.x = (W - size) / 2; board.y = narrow ? top : top + (H - top - size) / 2;
+  // телефон меняет высоту окна, когда прячет адресную строку: кусочки при этом не трогаем
+  if (pieces.length && (W !== oldW || Math.abs(H - oldH) > 150)) scatter();
 }
 
 /* ---------- звук ---------- */
@@ -578,8 +600,9 @@ function draw(t) {
       const grow = 1 - Math.pow(1 - q, 2);
       const sway = Math.sin(t / 700 + i) * .06;
       ctx.save(); ctx.translate(x, y - 20); ctx.rotate(sway);
-      drawApple(ctx, 0, 20, 4 + 20 * grow, Math.min(1, Math.max(0, (q - .25) / .7))); ctx.restore();
+      drawApple(ctx, 0, 20, 4 + 28 * grow, Math.min(1, Math.max(0, (q - .25) / .7))); ctx.restore();
     });
+    if (leafA > 0) { ctx.globalAlpha = leafA; ctx.drawImage(tree.over, 0, 0); ctx.globalAlpha = 1; }
   }
   ctx.restore();
 
