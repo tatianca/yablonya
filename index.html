@@ -187,7 +187,7 @@ function makeTree() {
     }
     return [ccx, ccy];
   }
-  const greens = ['#154a16', '#1c5a1b', '#267023', '#32832b', '#439735', '#58aa42'];
+  let greens = ['#154a16', '#1c5a1b', '#267023', '#32832b', '#439735', '#58aa42'], leafShadow = '#123f14';
   function drawLeaf(gg, x, y, a, len, light) {
     const wid = len * .3;
     gg.save(); gg.translate(x, y); gg.rotate(a);
@@ -209,7 +209,7 @@ function makeTree() {
   };
   // крона в три слоя: тень и тёмные листья позади, ветви, веточки листьев спереди
   function canopy(gg, rnd, count) {
-    gg.fillStyle = '#123f14';
+    gg.fillStyle = leafShadow;
     for (let i = 0; i < 300; i++) {
       const [x, y] = inCrown(rnd, .88);
       gg.beginPath(); gg.arc(x, y, 24 + rnd() * 16, 0, Math.PI * 2); gg.fill();
@@ -272,6 +272,8 @@ function makeTree() {
   const lf = document.createElement('canvas'); lf.width = lf.height = S;
   const L = lf.getContext('2d'), R2 = rngf(23);
   L.drawImage(base, 0, 0);
+  // после опадания цветов листва тёмно-зелёная
+  greens = ['#0a2c0d', '#0d3610', '#114214', '#154e18', '#1a5a1d', '#216723']; leafShadow = '#072209';
   canopy(L, R2, 7500);
   for (let i = 0; i < 260; i++) { L.fillStyle = petalCols[i % 4];
     L.beginPath(); L.ellipse(200 + R2() * 600, 895 + R2() * 85, 4.5, 2.8, R2() * 3, 0, Math.PI * 2); L.fill(); }
