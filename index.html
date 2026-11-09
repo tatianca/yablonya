@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Цветущая яблоня - пазл, который собирают пальцами</title>
+<title>Пазлы яблоня</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1720; color: #fff;
     font-family: 'Times New Roman', Times, serif; font-variant-numeric: lining-nums; font-size: 20px; line-height: 1.7; }
@@ -17,6 +17,7 @@
   button:hover { background: rgba(192,40,40,.75); }
   button.on { background: #c0392b; }
   #status { font-size: 20px; background: rgba(0,0,0,.6); padding: 6px 14px; border-radius: 10px; }
+  #gameName { font-size: 24px; color: #fff; background: #a61e1e; padding: 4px 14px; border-radius: 10px; }
   .overlay { position: fixed; inset: 0; display: flex; z-index: 10; overflow-y: auto; -webkit-overflow-scrolling: touch;
     background: rgba(10,16,24,.82); }
   .card { max-width: 680px; margin: auto; padding: 28px 34px; border-radius: 18px; background: #fffaf3; color: #2b1d14;
@@ -51,6 +52,7 @@
 <canvas id="c"></canvas>
 
 <div id="ui">
+  <b id="gameName">Пазлы яблоня</b>
   <span id="status">Собрано: 0 из 9</span>
   <button data-n="3" class="size on">3 x 3</button>
   <button data-n="4" class="size">4 x 4</button>
@@ -63,9 +65,9 @@
 
 <div class="overlay" id="intro">
   <div class="card">
-    <h1>Цветущая яблоня</h1>
+    <h1>Пазлы яблоня</h1>
     <p>Перед вами пазл с цветущей яблоней. Встаньте перед камерой и соберите его пальцами.</p>
-    <p>Сведите большой и указательный палец вместе, чтобы взять кусочек. Разведите пальцы, чтобы его отпустить. Кусочек рядом со своим местом встанет туда сам.</p>
+    <p>Сведите большой палец с любым другим или сожмите руку в кулак, чтобы взять кусочек. Разожмите пальцы, чтобы его отпустить. Кусочек рядом со своим местом встанет туда сам.</p>
     <p>Когда картинка сложится, на яблоне появятся красные яблоки.</p>
     <button id="btnCam">Включить камеру</button>
     <button id="btnMouse" class="alt">Играть без камеры</button>
@@ -502,17 +504,27 @@ function handleHands(res) {
     const label = (res.handednesses && res.handednesses[i] && res.handednesses[i][0].categoryName) || ('h' + i);
     let id = 'hand-' + label; if (seenNow.has(id)) id += i;
     seenNow.add(id);
-    const th = toS(lms[4]), ix = toS(lms[8]), wr = toS(lms[0]), mid = toS(lms[9]);
-    const palm = Math.max(20, Math.hypot(wr[0] - mid[0], wr[1] - mid[1]));
-    const ratio = Math.hypot(th[0] - ix[0], th[1] - ix[1]) / palm;
-    const tx = (th[0] + ix[0]) / 2, ty = (th[1] + ix[1]) / 2;
+    const th = toS(lms[4]), wr = toS(lms[0]), mid = toS(lms[9]);
+    const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const palm = Math.max(20, dist(wr, mid));
+    // кончики указательного, среднего, безымянного пальцев и мизинца, и их основания
+    const tips = [8, 12, 16, 20].map(k => toS(lms[k])), roots = [5, 9, 13, 17].map(k => toS(lms[k]));
+    // какой палец ближе всего к большому: взять можно любым
+    let ix = tips[0];
+    for (const p of tips) if (dist(p, th) < dist(ix, th)) ix = p;
+    const ratio = dist(th, ix) / palm;
+    // кулак: все четыре пальца согнуты к ладони
+    const curled = k => tips.every((p, n) => dist(p, wr) < dist(roots[n], wr) * k);
+    const fist = curled(1.1);
+    const tx = fist ? roots.reduce((s, p) => s + p[0], 0) / 4 : (th[0] + ix[0]) / 2;
+    const ty = fist ? roots.reduce((s, p) => s + p[1], 0) / 4 : (th[1] + ix[1]) / 2;
     const h = hands[id] || (hands[id] = { x: tx, y: ty, pinch: false });
     h.seen = true; h.lost = 0;
     h.x += (tx - h.x) * .55; h.y += (ty - h.y) * .55;
-    h.th = th; h.ix = ix;
+    h.th = th; h.ix = ix; h.tips = [th, ...tips];
     const was = h.pinch;
-    if (!was && ratio < .32) h.pinch = true;
-    else if (was && ratio > .48) h.pinch = false;
+    if (!was && (ratio < .32 || fist)) h.pinch = true;
+    else if (was && ratio > .48 && !curled(1.35)) h.pinch = false;
     if (h.pinch && !was) pointerDown(id, h.x, h.y, true);
     else if (h.pinch) pointerMove(id, h.x, h.y);
     else if (was) pointerUp(id);
@@ -611,7 +623,7 @@ function draw(t) {
     const h = hands[id]; if (!h.seen || !h.th) continue;
     ctx.strokeStyle = h.pinch ? '#ff5a5a' : 'rgba(255,255,255,.9)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(...h.th); ctx.lineTo(...h.ix); ctx.stroke();
-    for (const pt of [h.th, h.ix]) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(pt[0], pt[1], 7, 0, Math.PI * 2); ctx.fill(); }
+    for (const pt of h.tips) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(pt[0], pt[1], 7, 0, Math.PI * 2); ctx.fill(); }
     ctx.beginPath(); ctx.arc(h.x, h.y, h.pinch ? 14 : 20, 0, Math.PI * 2);
     ctx.fillStyle = h.pinch ? 'rgba(220,40,40,.8)' : 'rgba(255,255,255,.15)'; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = h.pinch ? '#fff' : '#ff5a5a'; ctx.stroke();
@@ -635,7 +647,7 @@ $('#again').onclick = () => newGame();
 document.querySelectorAll('.size').forEach(b => b.onclick = () => newGame(+b.dataset.n));
 addEventListener('resize', layout);
 
-window.__pazl = { get pieces() { return pieces; }, board, get pw() { return pw; } };
+window.__pazl = { get pieces() { return pieces; }, board, get pw() { return pw; }, handleHands, W: () => W, H: () => H };
 tree = makeTree();
 layout(); newGame(3);
 requestAnimationFrame(frame);
