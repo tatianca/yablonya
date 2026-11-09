@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Пазлы яблоня</title>
+<title>Цветущая яблоня - пазл, который собирают пальцами</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #0f1720; color: #fff;
     font-family: 'Times New Roman', Times, serif; font-variant-numeric: lining-nums; font-size: 20px; line-height: 1.7; }
@@ -52,7 +52,7 @@
 <canvas id="c"></canvas>
 
 <div id="ui">
-  <b id="gameName">Пазлы яблоня</b>
+  <b id="gameName">Цветущая яблоня</b>
   <span id="status">Собрано: 0 из 9</span>
   <button data-n="3" class="size on">3 x 3</button>
   <button data-n="4" class="size">4 x 4</button>
@@ -65,9 +65,9 @@
 
 <div class="overlay" id="intro">
   <div class="card">
-    <h1>Пазлы яблоня</h1>
+    <h1>Цветущая яблоня</h1>
     <p>Перед вами пазл с цветущей яблоней. Встаньте перед камерой и соберите его пальцами.</p>
-    <p>Сведите большой палец с любым другим или сожмите руку в кулак, чтобы взять кусочек. Разожмите пальцы, чтобы его отпустить. Кусочек рядом со своим местом встанет туда сам.</p>
+    <p>Активна вся рука. Поднесите её к кусочку и сожмите любые пальцы, чтобы его взять. Разожмите руку, чтобы отпустить. Кусочек рядом со своим местом встанет туда сам.</p>
     <p>Когда картинка сложится, на яблоне появятся красные яблоки.</p>
     <button id="btnCam">Включить камеру</button>
     <button id="btnMouse" class="alt">Играть без камеры</button>
@@ -386,23 +386,32 @@ function initAudio() { try { audio = audio || new (window.AudioContext || window
 
 /* ---------- захват и перенос ---------- */
 function toLocal(x, y) { return [(x - board.x) / board.k, (y - board.y) / board.k]; }
-function pointerDown(id, x, y, isHand) {
+function pointerDown(id, x, y, isHand, handPts, btnPt) {
   const st = { x, y, held: null, ox: 0, oy: 0 }; pointers.set(id, st);
-  if (isHand) {   // щипок по кнопке нажимает её
-    const el = document.elementFromPoint(x, y);
+  if (isHand) {   // сжатие руки над кнопкой нажимает её
+    const el = document.elementFromPoint(btnPt[0], btnPt[1]);
     if (el && el.tagName === 'BUTTON') { el.click(); return; }
   }
   if (state !== 'play') return;
   const [lx0, ly0] = toLocal(x, y);
-  const pad = isHand ? pw * .12 : 0;
+  // рука берёт кусочек любой своей точкой: мышь и касание проверяют одну точку, рука все
+  const pts = (isHand ? handPts : [[x, y]]).map(q => toLocal(q[0], q[1]));
+  const pad = isHand ? pw * .05 : 0;
+  let best = -1, bestHits = 0;
   for (let i = pieces.length - 1; i >= 0; i--) {
     const p = pieces[i]; if (p.locked || p.heldBy) continue;
-    const lx = lx0 - p.px, ly = ly0 - p.py;
-    if (hitCtx.isPointInPath(p.path, lx, ly) || (lx > -pad && lx < pw + pad && ly > -pad && ly < ph + pad)) {
-      p.heldBy = id; st.held = p; st.ox = lx; st.oy = ly;
-      pieces.splice(i, 1); pieces.push(p);
-      tone(520, 0, .08, .06); break;
+    let hits = 0;
+    for (const [qx, qy] of pts) {
+      const lx = qx - p.px, ly = qy - p.py;
+      if (hitCtx.isPointInPath(p.path, lx, ly) || (lx > -pad && lx < pw + pad && ly > -pad && ly < ph + pad)) hits++;
     }
+    if (hits > bestHits) { bestHits = hits; best = i; }   // берём кусочек, который рука накрывает больше всего
+  }
+  if (best >= 0) {
+    const p = pieces[best];
+    p.heldBy = id; st.held = p; st.ox = lx0 - p.px; st.oy = ly0 - p.py;
+    pieces.splice(best, 1); pieces.push(p);
+    tone(520, 0, .08, .06);
   }
 }
 function pointerMove(id, x, y) {
@@ -426,16 +435,19 @@ function pointerUp(id) {
   }
 }
 
-const FALL_START = 1000, FALL_END = 9000, APPLE_START = 9000, APPLE_STEP = 150, APPLE_GROW = 5000;   // мс после сборки
+// мс после сборки: цветы опадают до FALL_END, потом появляются зелёные яблочки и медленно растут
+const FALL_START = 1000, FALL_END = 16000, APPLE_START = 18000, APPLE_STEP = 200, APPLE_GROW = 14000;
 function finish() {
   state = 'done'; doneT = performance.now();
   [523, 659, 784, 1047].forEach((f, i) => tone(f, .3 + i * .15, .6, .12));
   tree.apples.forEach((_, i) => tone(880 + (i % 4) * 110, (APPLE_START + i * APPLE_STEP) / 1000, .2, .04));
   // каждый цветок срывается в своё время и падает на траву
-  petals = tree.flowers.map(f => ({ x: f.x, y: f.y, c: f.col, size: f.r * .55,
-    t0: FALL_START + Math.pow(Math.random(), .8) * (FALL_END - FALL_START - 2500),
-    vx: (Math.random() - .5) * 14, vy: 0, max: 50 + Math.random() * 35,
-    rot: Math.random() * 6, vr: (Math.random() - .5) * 4, ground: 890 + Math.random() * 85, landed: 0, ph: Math.random() * 6 }));
+  petals = tree.flowers.map(f => { const ground = 890 + Math.random() * 85;
+    return { x: f.x, y: f.y, c: f.col, size: f.r * .55,
+    t0: FALL_START + Math.pow(Math.random(), .8) * (FALL_END - FALL_START - 7000),
+    // каждый цветок падает 6-8 секунд, откуда бы ни сорвался
+    vx: (Math.random() - .5) * 14, vy: 0, max: (ground - f.y) / (6 + Math.random() * 2),
+    rot: Math.random() * 6, vr: (Math.random() - .5) * 4, ground, landed: 0, ph: Math.random() * 6 }; });
   setTimeout(() => { if (state === 'done') $('#done').style.display = 'block'; }, APPLE_START + tree.apples.length * APPLE_STEP + APPLE_GROW);
 }
 function newGame(size) {
@@ -504,28 +516,29 @@ function handleHands(res) {
     const label = (res.handednesses && res.handednesses[i] && res.handednesses[i][0].categoryName) || ('h' + i);
     let id = 'hand-' + label; if (seenNow.has(id)) id += i;
     seenNow.add(id);
-    const th = toS(lms[4]), wr = toS(lms[0]), mid = toS(lms[9]);
+    const pts = lms.map(toS);                  // все 21 точка руки
+    const th = pts[4], wr = pts[0];
     const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
-    const palm = Math.max(20, dist(wr, mid));
+    const palm = Math.max(20, dist(wr, pts[9]));
     // кончики указательного, среднего, безымянного пальцев и мизинца, и их основания
-    const tips = [8, 12, 16, 20].map(k => toS(lms[k])), roots = [5, 9, 13, 17].map(k => toS(lms[k]));
-    // какой палец ближе всего к большому: взять можно любым
+    const tips = [8, 12, 16, 20].map(k => pts[k]), roots = [5, 9, 13, 17].map(k => pts[k]);
+    // какой палец ближе всего к большому
     let ix = tips[0];
     for (const p of tips) if (dist(p, th) < dist(ix, th)) ix = p;
     const ratio = dist(th, ix) / palm;
-    // кулак: все четыре пальца согнуты к ладони
-    const curled = k => tips.every((p, n) => dist(p, wr) < dist(roots[n], wr) * k);
-    const fist = curled(1.1);
-    const tx = fist ? roots.reduce((s, p) => s + p[0], 0) / 4 : (th[0] + ix[0]) / 2;
-    const ty = fist ? roots.reduce((s, p) => s + p[1], 0) / 4 : (th[1] + ix[1]) / 2;
+    // сколько пальцев согнуто к ладони: хватает любых двух
+    const curled = k => tips.filter((p, n) => dist(p, wr) < dist(roots[n], wr) * k).length;
+    // кусочек движется вместе с центром ладони, поэтому не важно, какие пальцы сжаты
+    const center = [wr, ...roots];
+    const tx = center.reduce((s, p) => s + p[0], 0) / 5, ty = center.reduce((s, p) => s + p[1], 0) / 5;
     const h = hands[id] || (hands[id] = { x: tx, y: ty, pinch: false });
     h.seen = true; h.lost = 0;
     h.x += (tx - h.x) * .55; h.y += (ty - h.y) * .55;
-    h.th = th; h.ix = ix; h.tips = [th, ...tips];
+    h.th = th; h.ix = ix; h.tips = [th, ...tips]; h.pts = pts;
     const was = h.pinch;
-    if (!was && (ratio < .32 || fist)) h.pinch = true;
-    else if (was && ratio > .48 && !curled(1.35)) h.pinch = false;
-    if (h.pinch && !was) pointerDown(id, h.x, h.y, true);
+    if (!was && (ratio < .4 || curled(1.25) >= 2)) h.pinch = true;
+    else if (was && ratio > .55 && curled(1.45) < 2) h.pinch = false;
+    if (h.pinch && !was) pointerDown(id, h.x, h.y, true, pts, [(th[0] + ix[0]) / 2, (th[1] + ix[1]) / 2]);
     else if (h.pinch) pointerMove(id, h.x, h.y);
     else if (was) pointerUp(id);
   });
@@ -609,10 +622,10 @@ function draw(t) {
       // маленькое зелёное яблочко растёт и краснеет
       const q = Math.min(1, Math.max(0, (ms - APPLE_START - i * APPLE_STEP) / APPLE_GROW));
       if (q <= 0) return;
-      const grow = 1 - Math.pow(1 - q, 2);
+      const grow = q * q * (3 - 2 * q);    // сначала долго маленькое, потом плавно растёт
       const sway = Math.sin(t / 700 + i) * .06;
       ctx.save(); ctx.translate(x, y - 20); ctx.rotate(sway);
-      drawApple(ctx, 0, 20, 4 + 28 * grow, Math.min(1, Math.max(0, (q - .25) / .7))); ctx.restore();
+      drawApple(ctx, 0, 20, 11 + 21 * grow,Math.min(1, Math.max(0, (q - .35) / .6))); ctx.restore();
     });
     if (leafA > 0) { ctx.globalAlpha = leafA; ctx.drawImage(tree.over, 0, 0); ctx.globalAlpha = 1; }
   }
@@ -623,7 +636,10 @@ function draw(t) {
     const h = hands[id]; if (!h.seen || !h.th) continue;
     ctx.strokeStyle = h.pinch ? '#ff5a5a' : 'rgba(255,255,255,.9)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(...h.th); ctx.lineTo(...h.ix); ctx.stroke();
-    for (const pt of h.tips) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(pt[0], pt[1], 7, 0, Math.PI * 2); ctx.fill(); }
+    // вся рука активна: показываем все её точки, при захвате они красные
+    ctx.fillStyle = h.pinch ? '#ff5a5a' : '#fff';
+    for (const pt of h.pts) { ctx.beginPath(); ctx.arc(pt[0], pt[1], 4, 0, Math.PI * 2); ctx.fill(); }
+    for (const pt of h.tips) { ctx.beginPath(); ctx.arc(pt[0], pt[1], 8, 0, Math.PI * 2); ctx.fill(); }
     ctx.beginPath(); ctx.arc(h.x, h.y, h.pinch ? 14 : 20, 0, Math.PI * 2);
     ctx.fillStyle = h.pinch ? 'rgba(220,40,40,.8)' : 'rgba(255,255,255,.15)'; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = h.pinch ? '#fff' : '#ff5a5a'; ctx.stroke();
